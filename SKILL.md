@@ -62,6 +62,35 @@ ask them to do one of:
 
 Don't fabricate an audit result from assumptions; a check is only meaningful against the live file.
 
+## Parallel reads and page context
+
+Figma read calls may run in parallel, but only **before the first Figma edit** of the task. After any
+edit has started, run Figma calls one at a time.
+
+Parallel reads that switch pages can interfere with each other. In one observed run, a read that
+targeted page 24 returned page 16's data (the same component count, wrong names), and the audit
+reported the 24px variants as missing. Guard every read that switches pages:
+
+```js
+// Use in every read that switches pages. Returns data only for nodes that belong to PAGE_ID.
+const PAGE_ID = "42149:860";   // page node id from the table above
+const NAMES = ["foo_24"];       // component names to look for
+const page = await figma.getNodeByIdAsync(PAGE_ID);
+await figma.setCurrentPageAsync(page);
+if (figma.currentPage.id !== PAGE_ID) throw new Error("page context mismatch before read");
+const pageOf = (n) => { let p = n; while (p && p.type !== "PAGE") p = p.parent; return p; };
+const hits = figma.currentPage
+  .findAllWithCriteria({ types: ["COMPONENT", "COMPONENT_SET"] })
+  .filter((n) => NAMES.includes(n.name) && pageOf(n) && pageOf(n).id === PAGE_ID)
+  .map((n) => ({ name: n.name, id: n.id, w: n.width, h: n.height }));
+if (figma.currentPage.id !== PAGE_ID) throw new Error("page context changed during read");
+return { pageId: PAGE_ID, hits };
+```
+
+If a guard throws, discard that result and re-run the read. A "missing" claim (for example, "no 24px
+variant") must rest on a guarded read of that page, or on a lookup by node id. Never report absence
+from a read that threw or from a page you did not check.
+
 ## Step 1 — Resolve the target
 
 The user may give you any of:
@@ -73,10 +102,11 @@ The user may give you any of:
   a name match fails, list the components on the relevant page(s) and ask the user to point at the node,
   or inspect by node id.
 
-Page names equal the size suffix, so you only need to open the pages whose sizes the icon actually has
-(use the page node ids from the Prerequisites table). Switch pages with
-`await figma.setCurrentPageAsync(page)` and, per the figma-use rules, switch at most
-once per `use_figma` call — fan out across pages with parallel calls when an icon spans several sizes.
+Page names equal the size suffix. **Size sweep:** check all five pages (16 / 24 / 32 / 48 / 64) for
+every requested name, because an icon may exist at sizes the user did not mention. Use the page node
+ids from the Prerequisites table, one `use_figma` call per page, each with the guard from "Parallel
+reads and page context". Run them in parallel only before any Figma edit. Report the result as a table
+(`name × size → node id or missing`).
 
 ## Step 2 — Inspect
 
@@ -91,6 +121,7 @@ const NAMES = ["floating-window_16"]; // component name(s) to audit on this page
 figma.skipInvisibleInstanceChildren = true;
 const page = await figma.getNodeByIdAsync(PAGE_ID);
 await figma.setCurrentPageAsync(page);
+if (figma.currentPage.id !== PAGE_ID) throw new Error("page context mismatch before read");
 
 const toHex = (c) => {
   const h = (n) => Math.round(n * 255).toString(16).padStart(2, "0").toUpperCase();
@@ -106,7 +137,9 @@ const describeFill = (n) => {
   }));
 };
 
-const all = page.findAllWithCriteria({ types: ["COMPONENT", "COMPONENT_SET"] });
+const pageOf = (n) => { let p = n; while (p && p.type !== "PAGE") p = p.parent; return p; };
+const all = page.findAllWithCriteria({ types: ["COMPONENT", "COMPONENT_SET"] })
+  .filter((n) => pageOf(n) && pageOf(n).id === PAGE_ID);
 const report = [];
 for (const name of NAMES) {
   const c = all.find((x) => x.name === name);
@@ -125,11 +158,12 @@ for (const name of NAMES) {
     })),
   });
 }
+if (figma.currentPage.id !== PAGE_ID) throw new Error("page context changed during read");
 return report;
 ```
 
 To validate the **color contract** reliably, also read a known-good sibling icon of the same size
-(e.g. `list_16`) the same way and compare the primary shape's bound color variable / resolved fill.
+(e.g. `list_16`) the same way and compare the primary shape's bound variable **key** (Rule D).
 The nominal contract hex and the value actually stored in the file differ (see Rule D), so comparing
 against a real neighbor is more trustworthy than matching a literal hex.
 
@@ -165,6 +199,9 @@ Report each as ✅ pass / ❌ fail with the observed value and, on failure, what
     `icon__16` (two underscores) · `floating--window_16` (double hyphen) · `floating-window-16` (hyphen
     instead of underscore before size) · `-floating-window_16` (leading hyphen) · `floating-window_20`
     (size not in the allowed set) · `floating-window_16 ` (trailing space)
+- **`-o` suffix = outline variant.** The name without `-o` is the filled variant. A pair such as
+  `cloud_24` / `cloud-o_24` or `cloud-arrow-up_24` / `cloud-arrow-up-o_24` is one icon in two styles.
+  That is valid and is not a conflict or a duplicate; don't ask for a rename because of it.
 - The numeric suffix must equal the component's actual size (Rule B). A `..._16` that is 24×24 is a bug.
 
 ### B. Geometry & layout
@@ -183,6 +220,9 @@ Report each as ✅ pass / ❌ fail with the observed value and, on failure, what
   vectors, or hidden helper layers. Each extra node ends up in the exported SVG.
 - Each shape's **constraints are `SCALE` on both axes** (`horizontal: "SCALE"`, `vertical: "SCALE"`)
   so the artwork scales with the frame.
+  - **Severity: warning (hygiene), not an export blocker.** Constraints control how the component
+    resizes in Figma, not the exported path data. Fix them with the other approved Figma edits, because
+    instances and resizing depend on them.
 - Ideally each shape is a single flattened path (see the repo README "Draw an icon" steps: outline,
   flatten, Non-zero fill rule). Flag multiple sub-paths or unflattened groups as a warning.
 
@@ -193,9 +233,13 @@ The contract (repo README "SVG Color Zones Guide"):
 - **Secondary zone `shape-2`** → red **`#E21D03`**. The export rewrites it to `fill="currentColor"`.
 
 Practical reality: in the production file the primary fill is bound to the shared **`Icon/Contrast`**
-color variable, which **resolves to `#000819` at 0.85 opacity** — *not* a literal `#21222C`. So:
-- Validate the primary shape by confirming it uses the **same bound variable / resolved fill as an
-  existing sibling icon**, rather than insisting on the literal `#21222C`.
+variable, which **resolves to `#000819` at 0.85 paint opacity** — *not* a literal `#21222C`. So:
+- **Reference key: `91eb54e0eae961c540c994192c4eed18e4ea1825`** — `Icon/Contrast` from
+  `🟥 koobiq · components 19` (collection key `c78fab428cf2003c9aa53d86b132a2fa95acb2e2`).
+- Compare the primary paint's bound variable **key** with that reference
+  (`(await figma.variables.getVariableByIdAsync(boundId)).key`), and check the paint opacity is 0.85.
+  Don't compare names: `Icon/Contrast` exists in several libraries and collections. A same-named
+  variable with a different key is a **warning**, not a pass.
 - Validate the secondary shape by confirming its solid fill is the red `#E21D03` (this one the export
   matches as a literal hex — `secondaryZoneColorHex` in `.figmaexportrc.mjs`).
 - A primary fill that is a plain literal color matching no sibling, or a secondary fill that is not
@@ -278,7 +322,8 @@ If — and only if — the user asks you to fix the issues, you can do it with `
 set child `constraints`, rename
 `shape`/`shape-2`, rebind the primary fill to the `Icon/Contrast` variable used by siblings, set the
 secondary fill to `#E21D03`, or rewrite the `description`. Re-run Step 2 afterward and screenshot to
-confirm. Never edit the file as part of a plain "check" request.
+confirm. Never edit the file as part of a plain "check" request. Show the exact change set (node id,
+property, old → new) and apply only what the user approves.
 
 ## Notes & pitfalls
 
