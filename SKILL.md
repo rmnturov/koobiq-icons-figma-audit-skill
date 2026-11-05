@@ -211,6 +211,10 @@ Report each as ✅ pass / ❌ fail with the observed value and, on failure, what
 - **Fixed & square**: `width === height === size`. The size must be a whole number of pixels
   (pixel-grid aligned); fractional component sizes mean the icon was not drawn on the grid.
 - **Clip content OFF**: `clipsContent === false`. The "Clip content" toggle must be disabled. It must be the same (off) for every size variant of the icon.
+- **No transforms**: no rotation, flip, or scale on the component or any descendant. Check each node's
+  `relativeTransform` `[[a, c, tx], [b, d, ty]]`: `b` or `c` ≠ 0 means rotation; `a*d - b*c < 0` means
+  a flip (a mirror, e.g. `scaleY = -1`); `hypot(a, b)` or `hypot(c, d)` ≠ 1 means scale. Also check `rotation`.
+  The icon must look the same without any transform.
   When it is on, any artwork extending past the frame bounds is silently cropped in the export,
   producing a clipped or truncated icon.
 
@@ -367,6 +371,19 @@ Use these keys (collection `c78fab42…` is `Color Styles` in `🟥 koobiq · co
 Bind by key: `const v = await figma.variables.importVariableByKeyAsync(KEY)`, then
 `paint = figma.variables.setBoundVariableForPaint(paint, 'color', v)` and assign the new `fills` array.
 Set the primary paint opacity to 0.85 if it differs. Do not bind any other variable.
+
+### Removing transforms
+
+1. **Before changing anything, check instances.** A child's rotation shows in every instance, even when the
+   component's own rotation cancels it on the canvas. Resetting it can change the instance look.
+2. **Rotation.** If the instance look does not change, set the component and child `rotation` to 0. If it
+   changes, bake the rotation into the geometry first (step 3), then reset.
+3. **Flip or rotation baked into geometry.** `figma.flatten([node], parent, index)` returns a new vector with
+   the transform applied and identity matrix. Keep the name, parent, and index. Note that the node id changes:
+   instance overrides on the old id can break, so check instances first.
+4. **Verify.** For a flipped node, the visual top is `y − height` (`y` is the bottom edge after a vertical flip),
+   so compare the visual box, not the raw `y`. Take `get_screenshot` of the component before and after, and
+   compare the two PNGs pixel by pixel. Re-run the transform check; it must report no flagged nodes.
 
 ## Notes & pitfalls
 
