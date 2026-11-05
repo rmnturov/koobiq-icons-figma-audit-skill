@@ -387,6 +387,11 @@ Set the primary paint opacity to 0.85 if it differs. Do not bind any other varia
 
 ## Notes & pitfalls
 
+- **24px icons were historically copied from 16×16 and scaled.** Defects in a `_16` master can therefore be
+  inherited by its `_24` sibling (same flipped layer, same stroke, same constraints, same wrong name).
+  When you fix an issue on a `_16` component, re-check the same-named `_24` component (and the other sizes)
+  for the same issue, and fix it there too. Do not treat the `_24` as clean just because the `_16` was fixed.
+
 - New icons are frequently **unpublished**; `@figma-export` still exports them as long as they are real
   COMPONENT nodes on the configured pages and the name doesn't start with `.` or `_` (the
   `filterComponent` rule in `.figmaexportrc.mjs`). So an unpublished-but-correct component is fine.
