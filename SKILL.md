@@ -118,7 +118,7 @@ Pair it with a `get_screenshot` so you can confirm the glyph actually renders.
 // Page node ids: 16=1320:17387  24=42149:860  32=42149:862  48=42149:861  64=42149:863
 const PAGE_ID = "1320:17387";      // page whose name is the size, e.g. "16"
 const NAMES = ["floating-window_16"]; // component name(s) to audit on this page
-figma.skipInvisibleInstanceChildren = true;
+figma.skipInvisibleInstanceChildren = false; // false: rule G must see hidden layers too
 const page = await figma.getNodeByIdAsync(PAGE_ID);
 await figma.setCurrentPageAsync(page);
 if (figma.currentPage.id !== PAGE_ID) throw new Error("page context mismatch before read");
@@ -263,6 +263,7 @@ An icon component must not use variables or styles, except for one color binding
     effect bound to a variable;
   - any style: `fillStyleId`, `strokeStyleId`, `textStyleId`, `effectStyleId`, `gridStyleId` must be
     empty (`""`). A same-named style from another library counts as a style too.
+- **Hidden paints:** no fill or stroke with `visible: false` on the component or on any child. Remove them.
 - Report each violation with the node id, the field, and the variable or style name and key. Fix: unbind
   non-color variables (`node.setBoundVariable(field, null)`), detach styles (`node.fillStyleId = ""` and
   similar), and keep the bound color paint only on `shape`.
@@ -287,6 +288,9 @@ pt-icons-{{name}}       ← name in the pt-icons package     (optional)
 - The `kbq-{{name}}` line — the icon's name in the `@koobiq/icons` package: the component name with a
   `kbq-` prefix, including the size suffix. E.g. component `floating-window_16` → `kbq-floating-window_16`.
   Flag a failure if it's missing, doesn't match the component name, or has the wrong suffix.
+  The `kbq-` prefix is followed directly by the name: `kbq-name_16`. `kbq-icons-name_16` is wrong.
+  If the description starts with a note instead of the `kbq-` line, insert the `kbq-` line above the note
+  and keep the note; do not overwrite it.
 - The blank line immediately after it.
 
 **Optional** (absence is a soft note, never a blocker): the tags line, the description line, the
@@ -330,6 +334,10 @@ size suffix):
   (`<11: telegram-circle_16` vs `<11: telegram-circle_24`) — a `_24` whose `<11:` base name disagrees
   with its `_16` is a bug.
 
+> **Not yet checked in practice:** the cross-size consistency check (rule F, description and tags of the
+> same icon across `_16`/`_24`/`_32`/`_48`/`_64`) has not been run on the whole file yet. A full run needs
+> a description fingerprint per size page, compared across pages.
+
 ## Step 4 — Report
 
 Lead with a one-line verdict (**ready to export** / **needs fixes**), then the per-rule checklist
@@ -343,9 +351,22 @@ If — and only if — the user asks you to fix the issues, you can do it with `
 `figma-use` first): rename the component, set `layoutMode = "NONE"`, set `clipsContent = false`,
 set child `constraints`, rename
 `shape`/`shape-2`, rebind the primary fill to the `Icon/Contrast` variable used by siblings, set the
-secondary fill to `#E21D03`, or rewrite the `description`. Re-run Step 2 afterward and screenshot to
+secondary fill to `#E21D03` or to the `Icon/Error` variable, or rewrite the `description`. Re-run Step 2 afterward and screenshot to
 confirm. Never edit the file as part of a plain "check" request. Show the exact change set (node id,
 property, old → new) and apply only what the user approves.
+
+### Binding the color variables
+
+Use these keys (collection `c78fab42…` is `Color Styles` in `🟥 koobiq · components 19`):
+
+| Role | Variable | Key |
+| ---- | -------- | --- |
+| primary `shape` | `Icon/Contrast` | `91eb54e0eae961c540c994192c4eed18e4ea1825` |
+| secondary `shape-2` | `Icon/Error` | `e736157dcefc2a3e016ec2ddd41a7dc8cf8a5bc6` |
+
+Bind by key: `const v = await figma.variables.importVariableByKeyAsync(KEY)`, then
+`paint = figma.variables.setBoundVariableForPaint(paint, 'color', v)` and assign the new `fills` array.
+Set the primary paint opacity to 0.85 if it differs. Do not bind any other variable.
 
 ## Notes & pitfalls
 
@@ -356,3 +377,7 @@ property, old → new) and apply only what the user approves.
 - The export already strips `stroke`, `transform`, `color`, and `class`, but it does **not** strip
   `fill-opacity`. A shape carrying opacity will bake `fill-opacity` into the SVG; flag non-opaque
   fills if the repo's existing icons don't carry one.
+- The component `description` field stores HTML-escaped text: `<` is read back as `&lt;` and `&`
+  as `&amp;`. Writing a value that already contains `&lt;` or `&amp;` doubles the escaping (`&amp;lt;`).
+  Decode the text to raw characters first (`&lt;`→`<`, `&gt;`→`>`, `&amp;`→`&`, `&nbsp;`→U+00A0), edit
+  the raw text, and write it back. Verify after writing that no `&amp;` remains.
