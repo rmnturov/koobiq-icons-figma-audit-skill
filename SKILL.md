@@ -210,7 +210,7 @@ Report each as ✅ pass / ❌ fail with the observed value and, on failure, what
 - **No auto-layout**: `layoutMode === "NONE"`. Auto-layout reflows children and corrupts the export.
 - **Fixed & square**: `width === height === size`. The size must be a whole number of pixels
   (pixel-grid aligned); fractional component sizes mean the icon was not drawn on the grid.
-- **Clip content OFF**: `clipsContent === false`. The "Clip content" toggle must be disabled.
+- **Clip content OFF**: `clipsContent === false`. The "Clip content" toggle must be disabled. It must be the same (off) for every size variant of the icon.
   When it is on, any artwork extending past the frame bounds is silently cropped in the export,
   producing a clipped or truncated icon.
 
@@ -244,18 +244,22 @@ variable, which **resolves to `#000819` at 0.85 paint opacity** — *not* a lite
   variable allowed in an icon is this one, by key. A same-named variable with a different key
   (from another library or collection) is a **failure**, not a warning. Fix: rebind to the reference
   key variable from the same library collection.
-- Validate the secondary shape by confirming its solid fill is the red `#E21D03` (this one the export
-  matches as a literal hex — `secondaryZoneColorHex` in `.figmaexportrc.mjs`).
+- Secondary `shape-2` must be either a solid literal `#E21D03` (the export matches it as a literal hex —
+  `secondaryZoneColorHex` in `.figmaexportrc.mjs`), or bound by key to `Icon/Error` from
+  `🟥 koobiq · components 19` (key `e736157dcefc2a3e016ec2ddd41a7dc8cf8a5bc6`). For the variable case,
+  the paint opacity is not checked. Any other fill fails.
 - A primary fill that is a plain literal color matching no sibling, or a secondary fill that is not
   `#E21D03`, will export with the wrong color behavior — flag it.
 
 ### G. Variables and styles (fail if present)
 An icon component must not use variables or styles, except for one color binding:
-- **Allowed:** the primary `shape` fill bound to the reference variable from Rule D (key
-  `91eb54e0eae961c540c994192c4eed18e4ea1825`). Nothing else.
+- **Allowed:** exactly two variables, both by key from `components 19`:
+  - primary `shape` fill: `Icon/Contrast`, key `91eb54e0eae961c540c994192c4eed18e4ea1825`;
+  - secondary `shape-2` fill: `Icon/Error`, key `e736157dcefc2a3e016ec2ddd41a7dc8cf8a5bc6`.
+  Nothing else, and no variable bound to strokes.
 - **Forbidden on the component and every child, including nested layers:**
   - any other bound variable: `boundVariables` on the node (size, padding, radius, opacity, etc.), a
-    paint bound to another variable (this includes the secondary `shape-2` fill and strokes), or an
+    paint bound to any variable other than the two allowed above (this includes strokes), or an
     effect bound to a variable;
   - any style: `fillStyleId`, `strokeStyleId`, `textStyleId`, `effectStyleId`, `gridStyleId` must be
     empty (`""`). A same-named style from another library counts as a style too.
