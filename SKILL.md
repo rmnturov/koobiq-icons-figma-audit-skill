@@ -155,6 +155,8 @@ for (const name of NAMES) {
       w: ch.width, h: ch.height, x: ch.x, y: ch.y,
       constraints: ch.constraints,
       fills: describeFill(ch),
+      styles: { fill: ch.fillStyleId, stroke: ch.strokeStyleId, effect: ch.effectStyleId },
+      boundVariableFields: ch.boundVariables ? Object.keys(ch.boundVariables) : [],
     })),
   });
 }
@@ -238,12 +240,28 @@ variable, which **resolves to `#000819` at 0.85 paint opacity** — *not* a lite
   `🟥 koobiq · components 19` (collection key `c78fab428cf2003c9aa53d86b132a2fa95acb2e2`).
 - Compare the primary paint's bound variable **key** with that reference
   (`(await figma.variables.getVariableByIdAsync(boundId)).key`), and check the paint opacity is 0.85.
-  Don't compare names: `Icon/Contrast` exists in several libraries and collections. A same-named
-  variable with a different key is a **warning**, not a pass.
+  Don't compare names: `Icon/Contrast` exists in several libraries and collections. The **only**
+  variable allowed in an icon is this one, by key. A same-named variable with a different key
+  (from another library or collection) is a **failure**, not a warning. Fix: rebind to the reference
+  key variable from the same library collection.
 - Validate the secondary shape by confirming its solid fill is the red `#E21D03` (this one the export
   matches as a literal hex — `secondaryZoneColorHex` in `.figmaexportrc.mjs`).
 - A primary fill that is a plain literal color matching no sibling, or a secondary fill that is not
   `#E21D03`, will export with the wrong color behavior — flag it.
+
+### G. Variables and styles (fail if present)
+An icon component must not use variables or styles, except for one color binding:
+- **Allowed:** the primary `shape` fill bound to the reference variable from Rule D (key
+  `91eb54e0eae961c540c994192c4eed18e4ea1825`). Nothing else.
+- **Forbidden on the component and every child, including nested layers:**
+  - any other bound variable: `boundVariables` on the node (size, padding, radius, opacity, etc.), a
+    paint bound to another variable (this includes the secondary `shape-2` fill and strokes), or an
+    effect bound to a variable;
+  - any style: `fillStyleId`, `strokeStyleId`, `textStyleId`, `effectStyleId`, `gridStyleId` must be
+    empty (`""`). A same-named style from another library counts as a style too.
+- Report each violation with the node id, the field, and the variable or style name and key. Fix: unbind
+  non-color variables (`node.setBoundVariable(field, null)`), detach styles (`node.fillStyleId = ""` and
+  similar), and keep the bound color paint only on `shape`.
 
 ### E. Description metadata
 The component `description` field uses this exact format — each block separated by a single blank line,
